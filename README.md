@@ -1,0 +1,1 @@
+# strategy-analyzer-bar-exporter
