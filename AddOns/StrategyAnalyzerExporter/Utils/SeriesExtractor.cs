@@ -17,15 +17,18 @@ namespace NinjaTrader.Custom.AddOns.StrategyAnalyzerExporter.Utils
         }
 
         // Builds a series of doubles from a list of DataBars using the selected field.
-        public static List<double> ExtractSeries(List<DataBar> bars, Field field)
+        public static List<double> ExtractSeries(List<DataBar> bars, Field field, int lookback = 0)
         {
             var series = new List<double>();
             if (bars == null) return series;
 
-            foreach (var bar in bars)
+            var barsToProcess = lookback > 0 && bars.Count > lookback
+                ? bars.GetRange(bars.Count - lookback, lookback)
+                : bars;
+
+            foreach (var bar in barsToProcess)
             {
                 if (bar == null) continue;
-
                 double val = field switch
                 {
                     Field.Open => bar.Open,
@@ -36,10 +39,8 @@ namespace NinjaTrader.Custom.AddOns.StrategyAnalyzerExporter.Utils
                     Field.MovingAverage => bar.MovingAverage,
                     _ => throw new ArgumentOutOfRangeException(nameof(field), field, null)
                 };
-
                 series.Add(val);
             }
-
             return series;
         }
     }

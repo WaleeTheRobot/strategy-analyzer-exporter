@@ -1,6 +1,7 @@
 using NinjaTrader.Custom.AddOns.StrategyAnalyzerExporter.DataBars;
 using NinjaTrader.Custom.AddOns.StrategyAnalyzerExporter.Utils;
 using System;
+using System.Collections.Generic;
 
 namespace NinjaTrader.Custom.AddOns.StrategyAnalyzerExporter.Features.MovingAverages
 {
@@ -28,5 +29,11 @@ namespace NinjaTrader.Custom.AddOns.StrategyAnalyzerExporter.Features.MovingAver
             return Common.Round(distance);
         }
 
+        public static double GetMovingAverageAutocorrelation(
+            IReadOnlyList<double> movingAverageSeries,
+            int lag = 1)
+        {
+            return Common.Round(Common.CalculateAutocorrelation(movingAverageSeries, lag));
+        }
     }
 }

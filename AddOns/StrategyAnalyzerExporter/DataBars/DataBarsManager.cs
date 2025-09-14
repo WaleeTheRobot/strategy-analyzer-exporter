@@ -15,6 +15,7 @@ namespace NinjaTrader.Custom.AddOns.StrategyAnalyzerExporter.DataBars
         {
             public double MovingAverageDistance { get; set; }
             public double MovingAverageSlope { get; set; }
+            public double MovingAverageAutocorrelation { get; set; }
             public double OpenLocationValue { get; set; }
             public double CloseLocationValue { get; set; }
         }
@@ -84,16 +85,22 @@ namespace NinjaTrader.Custom.AddOns.StrategyAnalyzerExporter.DataBars
                 Low = baseBar.Low,
                 Close = baseBar.Close,
                 Volume = baseBar.Volume,
+                // Primary
                 F_PrimaryMovingAverageDistance = features[TimeFrame.Primary].MovingAverageDistance,
                 F_PrimaryMovingAverageSlope = features[TimeFrame.Primary].MovingAverageSlope,
+                F_PrimaryMovingAverageAutocorrelation = features[TimeFrame.Primary].MovingAverageAutocorrelation,
                 F_PrimaryOpenLocationValue = features[TimeFrame.Primary].OpenLocationValue,
                 F_PrimaryCloseLocationValue = features[TimeFrame.Primary].CloseLocationValue,
+                // Secondary
                 F_SecondaryMovingAverageDistance = features[TimeFrame.Secondary].MovingAverageDistance,
                 F_SecondaryMovingAverageSlope = features[TimeFrame.Secondary].MovingAverageSlope,
+                F_SecondaryMovingAverageAutocorrelation = features[TimeFrame.Secondary].MovingAverageAutocorrelation,
                 F_SecondaryOpenLocationValue = features[TimeFrame.Secondary].OpenLocationValue,
                 F_SecondaryCloseLocationValue = features[TimeFrame.Secondary].CloseLocationValue,
+                // Tertiary
                 F_TertiaryMovingAverageDistance = features[TimeFrame.Tertiary].MovingAverageDistance,
                 F_TertiaryMovingAverageSlope = features[TimeFrame.Tertiary].MovingAverageSlope,
+                F_TertiaryMovingAverageAutocorrelation = features[TimeFrame.Tertiary].MovingAverageAutocorrelation,
                 F_TertiaryOpenLocationValue = features[TimeFrame.Tertiary].OpenLocationValue,
                 F_TertiaryCloseLocationValue = features[TimeFrame.Tertiary].CloseLocationValue,
             };
@@ -110,26 +117,32 @@ namespace NinjaTrader.Custom.AddOns.StrategyAnalyzerExporter.DataBars
         private BarFeatures ExtractFeaturesForTimeFrame(TimeFrame timeFrame)
         {
             var dataBars = _dataBars[timeFrame];
-            var (dist, slope) = GetMovingAverageFeatures(dataBars);
+            var (dist, slope, autocorrelation) = GetMovingAverageFeatures(dataBars);
             var (olv, clv) = GetPriceFeatures(dataBars);
 
             return new BarFeatures
             {
                 MovingAverageDistance = dist,
                 MovingAverageSlope = slope,
+                MovingAverageAutocorrelation = autocorrelation,
                 OpenLocationValue = olv,
                 CloseLocationValue = clv
             };
         }
 
-        private static (double MovingAverageDistance, double MovingAverageSlope) GetMovingAverageFeatures(List<DataBar> dataBars)
+        private static (double MovingAverageDistance, double MovingAverageSlope, double MovingAverageAutocorrelation)
+            GetMovingAverageFeatures(List<DataBar> dataBars)
         {
-            if (dataBars == null || dataBars.Count == 0) return (0.0, 0.0);
+            if (dataBars == null || dataBars.Count == 0) return (0.0, 0.0, 0.0);
+
             var lastBar = dataBars[dataBars.Count - 1];
             var distance = MovingAverages.GetCloseMovingAverageDistance(lastBar);
-            var maSeries = SeriesExtractor.ExtractSeries(dataBars, SeriesExtractor.Field.MovingAverage);
-            var slope = Slope.Calculate(maSeries, lookback: LOOKBACK_PERIOD);
-            return (distance, slope);
+            var maSeries = SeriesExtractor.ExtractSeries(dataBars, SeriesExtractor.Field.MovingAverage, LOOKBACK_PERIOD);
+
+            var slope = Slope.Calculate(maSeries);
+            var autoCorrelation = MovingAverages.GetMovingAverageAutocorrelation(maSeries, lag: 1);
+
+            return (distance, slope, autoCorrelation);
         }
 
         private static (double OpenLocationValue, double CloseLocationValue) GetPriceFeatures(List<DataBar> dataBars)
