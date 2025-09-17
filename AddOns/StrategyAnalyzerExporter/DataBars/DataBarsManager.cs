@@ -1,6 +1,4 @@
 ﻿using NinjaTrader.Custom.AddOns.StrategyAnalyzerExporter.Database;
-using NinjaTrader.Custom.AddOns.StrategyAnalyzerExporter.Features.MovingAverages;
-using NinjaTrader.Custom.AddOns.StrategyAnalyzerExporter.Features.Price;
 using NinjaTrader.Custom.AddOns.StrategyAnalyzerExporter.Utils;
 using System;
 using System.Collections.Generic;
@@ -11,49 +9,34 @@ namespace NinjaTrader.Custom.AddOns.StrategyAnalyzerExporter.DataBars
     {
         public enum TimeFrame { Primary, Secondary, Tertiary }
 
-        public class BarFeatures
-        {
-            public double MovingAverageDistance { get; set; }
-            public double MovingAverageSlope { get; set; }
-            public double MovingAverageAutocorrelation { get; set; }
-            public double OpenLocationValue { get; set; }
-            public double CloseLocationValue { get; set; }
-        }
-
-        private const int LOOKBACK_PERIOD = 9;
-        private const int FLUSH_SIZE = 2000;
-        private static readonly TimeSpan FLUSH_INTERVAL = TimeSpan.FromSeconds(5);
-
         private readonly DataBarsConfig _config;
         private readonly Dictionary<TimeFrame, List<DataBar>> _dataBars;
         private readonly Queue<FeaturesDataBar> _pendingWrites;
 
         private DatabaseWriter _dbWriter;
+        private readonly int _flushSize;
+        private readonly TimeSpan _flushInterval;
         private DateTime _lastFlushTime;
         private bool _disposed;
+        private bool _tableEnsured;
 
         public DataBarsManager(DataBarsConfig config)
         {
-            _config = config;
+            _config = config ?? new DataBarsConfig();
+            _flushSize = _config.FlushSize;
+            _flushInterval = TimeSpan.FromSeconds(_config.FlushIntervalSeconds);
+
             _dataBars = new Dictionary<TimeFrame, List<DataBar>>
             {
                 { TimeFrame.Primary,   new List<DataBar>() },
                 { TimeFrame.Secondary, new List<DataBar>() },
                 { TimeFrame.Tertiary,  new List<DataBar>() }
             };
+
             _pendingWrites = new Queue<FeaturesDataBar>();
             _lastFlushTime = DateTime.UtcNow;
 
             InitializeDatabase();
-        }
-
-        private void InitializeDatabase()
-        {
-            if (!_config.EnableWriteToDatabase || string.IsNullOrEmpty(_config.DatabasePath))
-                return;
-
-            _dbWriter = new DatabaseWriter(_config.DatabasePath);
-            _dbWriter.EnsureTableExists<FeaturesDataBar>();
         }
 
         public void OnNewPrimaryBarAvailable(bool canCalculateFeatures, DataBar dataBar)
@@ -71,12 +54,12 @@ namespace NinjaTrader.Custom.AddOns.StrategyAnalyzerExporter.DataBars
         }
 
         public void OnNewSecondaryBarAvailable(DataBar prev) => _dataBars[TimeFrame.Secondary].Add(prev);
+
         public void OnNewTertiaryBarAvailable(DataBar prev) => _dataBars[TimeFrame.Tertiary].Add(prev);
 
         private FeaturesDataBar CreateFeaturesDataBar(DataBar baseBar)
         {
-            var features = ExtractAllFeatures();
-            return new FeaturesDataBar
+            var featuresDataBar = new FeaturesDataBar
             {
                 Time = baseBar.Time,
                 Day = baseBar.Day,
@@ -85,85 +68,44 @@ namespace NinjaTrader.Custom.AddOns.StrategyAnalyzerExporter.DataBars
                 Low = baseBar.Low,
                 Close = baseBar.Close,
                 Volume = baseBar.Volume,
-                // Primary
-                F_PrimaryMovingAverageDistance = features[TimeFrame.Primary].MovingAverageDistance,
-                F_PrimaryMovingAverageSlope = features[TimeFrame.Primary].MovingAverageSlope,
-                F_PrimaryMovingAverageAutocorrelation = features[TimeFrame.Primary].MovingAverageAutocorrelation,
-                F_PrimaryOpenLocationValue = features[TimeFrame.Primary].OpenLocationValue,
-                F_PrimaryCloseLocationValue = features[TimeFrame.Primary].CloseLocationValue,
-                // Secondary
-                F_SecondaryMovingAverageDistance = features[TimeFrame.Secondary].MovingAverageDistance,
-                F_SecondaryMovingAverageSlope = features[TimeFrame.Secondary].MovingAverageSlope,
-                F_SecondaryMovingAverageAutocorrelation = features[TimeFrame.Secondary].MovingAverageAutocorrelation,
-                F_SecondaryOpenLocationValue = features[TimeFrame.Secondary].OpenLocationValue,
-                F_SecondaryCloseLocationValue = features[TimeFrame.Secondary].CloseLocationValue,
-                // Tertiary
-                F_TertiaryMovingAverageDistance = features[TimeFrame.Tertiary].MovingAverageDistance,
-                F_TertiaryMovingAverageSlope = features[TimeFrame.Tertiary].MovingAverageSlope,
-                F_TertiaryMovingAverageAutocorrelation = features[TimeFrame.Tertiary].MovingAverageAutocorrelation,
-                F_TertiaryOpenLocationValue = features[TimeFrame.Tertiary].OpenLocationValue,
-                F_TertiaryCloseLocationValue = features[TimeFrame.Tertiary].CloseLocationValue,
+
+                Primary = TimeFrameFeatures.ExtractFrom(_dataBars[TimeFrame.Primary], _config),
+                Secondary = TimeFrameFeatures.ExtractFrom(_dataBars[TimeFrame.Secondary], _config),
+                Tertiary = TimeFrameFeatures.ExtractFrom(_dataBars[TimeFrame.Tertiary], _config)
             };
-        }
 
-        private Dictionary<TimeFrame, BarFeatures> ExtractAllFeatures()
-        {
-            var features = new Dictionary<TimeFrame, BarFeatures>();
-            foreach (TimeFrame tf in Enum.GetValues(typeof(TimeFrame)))
-                features[tf] = ExtractFeaturesForTimeFrame(tf);
-            return features;
-        }
-
-        private BarFeatures ExtractFeaturesForTimeFrame(TimeFrame timeFrame)
-        {
-            var dataBars = _dataBars[timeFrame];
-            var (dist, slope, autocorrelation) = GetMovingAverageFeatures(dataBars);
-            var (olv, clv) = GetPriceFeatures(dataBars);
-
-            return new BarFeatures
-            {
-                MovingAverageDistance = dist,
-                MovingAverageSlope = slope,
-                MovingAverageAutocorrelation = autocorrelation,
-                OpenLocationValue = olv,
-                CloseLocationValue = clv
-            };
-        }
-
-        private static (double MovingAverageDistance, double MovingAverageSlope, double MovingAverageAutocorrelation)
-            GetMovingAverageFeatures(List<DataBar> dataBars)
-        {
-            if (dataBars == null || dataBars.Count == 0) return (0.0, 0.0, 0.0);
-
-            var lastBar = dataBars[dataBars.Count - 1];
-            var distance = MovingAverages.GetCloseMovingAverageDistance(lastBar);
-            var maSeries = SeriesExtractor.ExtractSeries(dataBars, SeriesExtractor.Field.MovingAverage, LOOKBACK_PERIOD);
-
-            var slope = Slope.Calculate(maSeries);
-            var autoCorrelation = MovingAverages.GetMovingAverageAutocorrelation(maSeries, lag: 1);
-
-            return (distance, slope, autoCorrelation);
-        }
-
-        private static (double OpenLocationValue, double CloseLocationValue) GetPriceFeatures(List<DataBar> dataBars)
-        {
-            if (dataBars == null || dataBars.Count == 0) return (0.0, 0.0);
-            var lastBar = dataBars[dataBars.Count - 1];
-            var olv = Price.GetOpenLocationValue(lastBar);
-            var clv = Price.GetCloseLocationValue(lastBar);
-            return (olv, clv);
+            return featuresDataBar;
         }
 
         #region Database Handling
 
         public void FlushPending() => FlushToDatabase();
+        public void FinalizeAndClose() => FinalizeInternal();
+        public void Dispose() => FinalizeInternal();
+
+        private void InitializeDatabase()
+        {
+            if (!_config.EnableWriteToDatabase || string.IsNullOrEmpty(_config.DatabasePath))
+                return;
+
+            var tableName = string.IsNullOrWhiteSpace(_config.TableName) ? "FeaturesDataBars" : _config.TableName;
+
+            _dbWriter = new DatabaseWriter(
+                _config.DatabasePath,
+                tableName,
+                _config.UseFloat32
+            );
+
+            _dbWriter.EnsureTableExists<FeaturesDataBar>();
+            _tableEnsured = true;
+        }
 
         private void QueueForDatabase(FeaturesDataBar bar)
         {
             _pendingWrites.Enqueue(bar);
 
-            bool sizeDue = _pendingWrites.Count >= FLUSH_SIZE;
-            bool timeDue = (DateTime.UtcNow - _lastFlushTime) >= FLUSH_INTERVAL;
+            bool sizeDue = _pendingWrites.Count >= _flushSize;
+            bool timeDue = (DateTime.UtcNow - _lastFlushTime) >= _flushInterval;
 
             if (sizeDue || timeDue)
                 FlushToDatabase();
@@ -171,13 +113,20 @@ namespace NinjaTrader.Custom.AddOns.StrategyAnalyzerExporter.DataBars
 
         private void FlushToDatabase()
         {
-            if (_dbWriter == null || _pendingWrites.Count == 0 || _disposed) return;
+            if (_disposed || _dbWriter == null || _pendingWrites.Count == 0) return;
 
-            var batch = new List<FeaturesDataBar>();
-            while (_pendingWrites.Count > 0) batch.Add(_pendingWrites.Dequeue());
+            var batch = new List<FeaturesDataBar>(_pendingWrites.Count);
+            while (_pendingWrites.Count > 0)
+                batch.Add(_pendingWrites.Dequeue());
 
             try
             {
+                if (!_tableEnsured)
+                {
+                    _dbWriter.EnsureTableExists<FeaturesDataBar>();
+                    _tableEnsured = true;
+                }
+
                 _dbWriter.InsertBatch(batch);
                 _lastFlushTime = DateTime.UtcNow;
             }
@@ -194,8 +143,11 @@ namespace NinjaTrader.Custom.AddOns.StrategyAnalyzerExporter.DataBars
 
             try
             {
+                // Flush any queued rows
                 FlushToDatabase();
-                _dbWriter?.CheckpointAndFinalize(); // Merge WAL and remove -wal/-shm
+
+                // Fold WAL into the main file (optional but nice)
+                try { _dbWriter?.Checkpoint(); } catch { /* ignore */ }
             }
             catch (Exception ex)
             {
@@ -203,14 +155,11 @@ namespace NinjaTrader.Custom.AddOns.StrategyAnalyzerExporter.DataBars
             }
             finally
             {
-                _dbWriter?.Dispose();
+                // Deterministic release of the file handle
+                try { _dbWriter?.Dispose(); } catch { /* ignore */ }
                 _dbWriter = null;
             }
         }
-
-        public void FinalizeAndClose() => FinalizeInternal();
-
-        public void Dispose() => FinalizeInternal();
 
         #endregion
     }

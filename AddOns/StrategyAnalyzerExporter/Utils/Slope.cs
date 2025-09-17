@@ -35,7 +35,7 @@ namespace NinjaTrader.Custom.AddOns.StrategyAnalyzerExporter.Utils
             if (Math.Abs(mean) < tolerance)
                 return 0.0;
 
-            return Common.Round(slope / mean);
+            return slope / mean;
         }
     }
 }

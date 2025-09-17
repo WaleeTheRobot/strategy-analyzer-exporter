@@ -9,23 +9,15 @@
         public double Low { get; set; }
         public double Close { get; set; }
         public double Volume { get; set; }
-        // Primary
-        public double F_PrimaryMovingAverageDistance { get; set; }
-        public double F_PrimaryMovingAverageSlope { get; set; }
-        public double F_PrimaryMovingAverageAutocorrelation { get; set; }
-        public double F_PrimaryOpenLocationValue { get; set; }
-        public double F_PrimaryCloseLocationValue { get; set; }
-        // Secondary
-        public double F_SecondaryMovingAverageDistance { get; set; }
-        public double F_SecondaryMovingAverageSlope { get; set; }
-        public double F_SecondaryMovingAverageAutocorrelation { get; set; }
-        public double F_SecondaryOpenLocationValue { get; set; }
-        public double F_SecondaryCloseLocationValue { get; set; }
-        // Tertiary
-        public double F_TertiaryMovingAverageDistance { get; set; }
-        public double F_TertiaryMovingAverageSlope { get; set; }
-        public double F_TertiaryMovingAverageAutocorrelation { get; set; }
-        public double F_TertiaryOpenLocationValue { get; set; }
-        public double F_TertiaryCloseLocationValue { get; set; }
+        public TimeFrameFeatures Primary { get; set; }
+        public TimeFrameFeatures Secondary { get; set; }
+        public TimeFrameFeatures Tertiary { get; set; }
+
+        public FeaturesDataBar()
+        {
+            Primary = new TimeFrameFeatures();
+            Secondary = new TimeFrameFeatures();
+            Tertiary = new TimeFrameFeatures();
+        }
     }
 }

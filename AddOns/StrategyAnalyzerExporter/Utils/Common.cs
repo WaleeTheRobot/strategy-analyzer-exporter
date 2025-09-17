@@ -5,12 +5,6 @@ namespace NinjaTrader.Custom.AddOns.StrategyAnalyzerExporter.Utils
 {
     public static class Common
     {
-        // Single function to round value
-        public static double Round(double value)
-        {
-            return Math.Round(value, 6, MidpointRounding.AwayFromZero);
-        }
-
         public static double Clamp(double value, double min, double max)
         {
             return Math.Max(min, Math.Min(max, value));

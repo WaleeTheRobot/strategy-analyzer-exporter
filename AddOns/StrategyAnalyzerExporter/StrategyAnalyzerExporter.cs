@@ -46,20 +46,28 @@ namespace NinjaTrader.NinjaScript.Strategies
         [Display(Name = "Database Path", Description = "The database path.", Order = 2, GroupName = GROUP_NAME_DEFAULT)]
         public string DatabasePath { get; set; }
 
+        [NinjaScriptProperty]
+        [Display(Name = "Use Float32", Description = "Use float32 instead of double when writing to the database. Less precision and size reduces approximately 50%.", Order = 3, GroupName = GROUP_NAME_DEFAULT)]
+        public bool UseFloat32 { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Table Name", Description = "The table name.", Order = 4, GroupName = GROUP_NAME_DEFAULT)]
+        public string TableName { get; set; }
+
         [Range(1, int.MaxValue), NinjaScriptProperty]
-        [Display(Name = "Ticks Per Level", Description = "The ticks per level", Order = 3, GroupName = GROUP_NAME_DEFAULT)]
+        [Display(Name = "Ticks Per Level", Description = "The ticks per level", Order = 5, GroupName = GROUP_NAME_DEFAULT)]
         public int TicksPerLevel { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Time Enabled", Description = "Enable this to enable time start/end.", Order = 4, GroupName = GROUP_NAME_DEFAULT)]
+        [Display(Name = "Time Enabled", Description = "Enable this to enable time start/end.", Order = 6, GroupName = GROUP_NAME_DEFAULT)]
         public bool TimeEnabled { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Time Start", Description = "The allowed time to enable.", Order = 5, GroupName = GROUP_NAME_DEFAULT)]
+        [Display(Name = "Time Start", Description = "The allowed time to enable.", Order = 7, GroupName = GROUP_NAME_DEFAULT)]
         public string TimeStart { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Time End", Description = "The allowed time to disable and close positions.", Order = 6, GroupName = GROUP_NAME_DEFAULT)]
+        [Display(Name = "Time End", Description = "The allowed time to disable and close positions.", Order = 8, GroupName = GROUP_NAME_DEFAULT)]
         public string TimeEnd { get; set; }
 
         #endregion
@@ -90,10 +98,12 @@ namespace NinjaTrader.NinjaScript.Strategies
                 // Properties
                 EnableWriteToDatabase = true;
                 EnablePrintDataBar = true;
-                DatabasePath = @"C:\temp\strategy_analyzer_export.sqlite";
+                DatabasePath = @"C:\temp\strategy_analyzer_export.duckdb";
+                TableName = "FeaturesDataBars";
+                UseFloat32 = true;
                 TicksPerLevel = 1;
                 TimeEnabled = true;
-                TimeStart = "090000";
+                TimeStart = "090000"; // Return bars only within this time start and end
                 TimeEnd = "155500";
             }
             else if (State == State.Configure)
@@ -110,6 +120,11 @@ namespace NinjaTrader.NinjaScript.Strategies
                     EnablePrintDataBar = EnablePrintDataBar,
                     DatabasePath = DatabasePath,
                     TicksPerLevel = TicksPerLevel,
+                    LookbackPeriod = 9,
+                    UseFloat32 = UseFloat32,
+                    TableName = TableName,
+                    FlushSize = 2000,
+                    FlushIntervalSeconds = 5
                 };
 
                 _dataBarsManager = new DataBarsManager(config);
