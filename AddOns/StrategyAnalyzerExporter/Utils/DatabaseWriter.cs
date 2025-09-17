@@ -1,5 +1,4 @@
-﻿using DuckDB.NET.Data;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
@@ -27,8 +26,64 @@ namespace NinjaTrader.Custom.AddOns.StrategyAnalyzerExporter.Database
 
         private readonly string _tableName;
         private readonly bool _useFloat32;
-        private DuckDBConnection _connection;
+        private dynamic _connection;
         private bool _disposed;
+
+        // Assembly and type caching
+        private static Assembly _duckDBAssembly;
+        private static Type _connectionType;
+        private static bool _typesLoaded = false;
+        private static readonly object _loadLock = new object();
+
+        static DatabaseWriter()
+        {
+            // Set up assembly resolver
+            AppDomain.CurrentDomain.AssemblyResolve += OnAssemblyResolve;
+        }
+
+        private static Assembly OnAssemblyResolve(object sender, ResolveEventArgs args)
+        {
+            if (args.Name.StartsWith("DuckDB.NET.Data") || args.Name.StartsWith("DuckDB.NET.Bindings"))
+            {
+                var fileName = args.Name.StartsWith("DuckDB.NET.Data") ? "DuckDB.NET.Data.dll" : "DuckDB.NET.Bindings.dll";
+                var path = Path.Combine(@"C:\DuckDB", fileName);
+
+                if (File.Exists(path))
+                {
+                    return Assembly.LoadFrom(path);
+                }
+            }
+            return null;
+        }
+
+        private static void LoadDuckDBTypes()
+        {
+            if (_typesLoaded) return;
+
+            lock (_loadLock)
+            {
+                if (_typesLoaded) return;
+
+                try
+                {
+                    var dataAssemblyPath = @"C:\DuckDB\DuckDB.NET.Data.dll";
+                    if (!File.Exists(dataAssemblyPath))
+                        throw new FileNotFoundException($"DuckDB.NET.Data.dll not found at {dataAssemblyPath}");
+
+                    _duckDBAssembly = Assembly.LoadFrom(dataAssemblyPath);
+                    _connectionType = _duckDBAssembly.GetType("DuckDB.NET.Data.DuckDBConnection");
+
+                    if (_connectionType == null)
+                        throw new TypeLoadException("Could not find DuckDBConnection type");
+
+                    _typesLoaded = true;
+                }
+                catch (Exception ex)
+                {
+                    throw new InvalidOperationException($"Failed to load DuckDB types: {ex.Message}", ex);
+                }
+            }
+        }
 
         public DatabaseWriter(string databasePath, string tableName = "FeatureDataBars", bool useFloat32 = true)
         {
@@ -39,10 +94,15 @@ namespace NinjaTrader.Custom.AddOns.StrategyAnalyzerExporter.Database
             if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
                 Directory.CreateDirectory(directory);
 
-            NativeDuckDb.EnsureLoaded(); // Load native duckdb.dll
+            // Load DuckDB types and native library
+            LoadDuckDBTypes();
+            NativeDuckDb.EnsureLoaded();
 
+            // Create connection using Activator.CreateInstance
             var cs = $"Data Source={databasePath}";
-            _connection = new DuckDBConnection(cs);
+            _connection = Activator.CreateInstance(_connectionType, cs);
+
+            // Use dynamic to call Open - no ambiguity
             _connection.Open();
 
             ApplyOptimizations();
@@ -77,39 +137,41 @@ namespace NinjaTrader.Custom.AddOns.StrategyAnalyzerExporter.Database
 
             var sql = $"INSERT INTO {Quote(_tableName)} ({string.Join(", ", colNames)}) VALUES ({placeholders})";
 
-            using var tx = _connection.BeginTransaction();
-
             try
             {
-                foreach (var item in items)
+                // Use dynamic calls to avoid ambiguity
+                using (dynamic tx = _connection.BeginTransaction())
                 {
-                    using var cmd = _connection.CreateCommand();
-                    cmd.Transaction = tx;
-                    cmd.CommandText = sql;
-
-                    // Extract values using flattening logic
-                    var values = ExtractFlattenedValues(item, flatColumns);
-
-                    for (int i = 0; i < values.Count; i++)
+                    foreach (var item in items)
                     {
-                        var prm = cmd.CreateParameter();
-                        prm.Value = ConvertForStorage(values[i], flatColumns[i].PropertyType, _useFloat32);
-                        cmd.Parameters.Add(prm);
+                        using (dynamic cmd = _connection.CreateCommand())
+                        {
+                            cmd.Transaction = tx;
+                            cmd.CommandText = sql;
+
+                            // Extract values using flattening logic
+                            var values = ExtractFlattenedValues(item, flatColumns);
+
+                            // Add parameters using dynamic
+                            for (int i = 0; i < values.Count; i++)
+                            {
+                                dynamic param = cmd.CreateParameter();
+                                param.Value = ConvertForStorage(values[i], flatColumns[i].PropertyType, _useFloat32);
+                                cmd.Parameters.Add(param);
+                            }
+
+                            cmd.ExecuteNonQuery();
+                        }
                     }
 
-                    cmd.ExecuteNonQuery();
+                    tx.Commit();
                 }
-
-                tx.Commit();
             }
-            catch
+            catch (Exception ex)
             {
-                try { tx.Rollback(); } catch { /* ignore */ }
-                throw;
+                throw new InvalidOperationException($"Database insert failed: {ex.Message}", ex);
             }
         }
-
-
 
         private List<FlatColumn> GetFlattenedColumns(Type type)
         {
@@ -156,7 +218,7 @@ namespace NinjaTrader.Custom.AddOns.StrategyAnalyzerExporter.Database
             return columns;
         }
 
-        private List<object> ExtractFlattenedValues(object item, List<FlatColumn> columns)
+        private static List<object> ExtractFlattenedValues(object item, List<FlatColumn> columns)
         {
             var values = new List<object>();
 
@@ -191,7 +253,7 @@ namespace NinjaTrader.Custom.AddOns.StrategyAnalyzerExporter.Database
                 "Primary" => "Primary",
                 "Secondary" => "Secondary",
                 "Tertiary" => "Tertiary",
-                _ => propertyName // fallback
+                _ => propertyName
             };
         }
 
@@ -201,11 +263,28 @@ namespace NinjaTrader.Custom.AddOns.StrategyAnalyzerExporter.Database
             try { ExecuteNonQuery("CHECKPOINT;"); } catch { /* ignore */ }
         }
 
-        // Hard close to release file handles immediately
         public void CloseImmediately()
         {
-            try { _connection?.Close(); } catch { /* ignore */ }
-            try { _connection?.Dispose(); } catch { /* ignore */ }
+            if (_connection == null) return;
+
+            try
+            {
+                _connection.Close();
+            }
+            catch
+            {
+                /* ignore */
+            }
+
+            try
+            {
+                ((IDisposable)_connection)?.Dispose();
+            }
+            catch
+            {
+                /* ignore */
+            }
+
             _connection = null;
         }
 
@@ -252,9 +331,11 @@ namespace NinjaTrader.Custom.AddOns.StrategyAnalyzerExporter.Database
 
         private void ExecuteNonQuery(string sql)
         {
-            using var cmd = _connection.CreateCommand();
-            cmd.CommandText = sql;
-            cmd.ExecuteNonQuery();
+            using (dynamic cmd = _connection.CreateCommand())
+            {
+                cmd.CommandText = sql;
+                cmd.ExecuteNonQuery();
+            }
         }
 
         public void Dispose()
@@ -269,7 +350,6 @@ namespace NinjaTrader.Custom.AddOns.StrategyAnalyzerExporter.Database
 
     /// <summary>
     /// Robust native loader that finds and loads duckdb.dll before opening the connection.
-    /// Do NOT add the native DLL as a NinjaScript "Reference".
     /// </summary>
     internal static class NativeDuckDb
     {
@@ -281,15 +361,13 @@ namespace NinjaTrader.Custom.AddOns.StrategyAnalyzerExporter.Database
 
         public static void EnsureLoaded()
         {
-            var asmPath = Assembly.GetExecutingAssembly().Location;
-            var asmDir = Path.GetDirectoryName(asmPath) ?? "";
-
             var candidates = new[]
             {
-                asmDir,
-                AppDomain.CurrentDomain.BaseDirectory ?? "",
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "NinjaTrader 8", "bin"),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "NinjaTrader 8", "bin64"),
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "NinjaTrader 8", "bin", "Custom"),
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),  "NinjaTrader 8", "bin64")
+                AppDomain.CurrentDomain.BaseDirectory ?? "",
+                Assembly.GetExecutingAssembly().Location != null ? Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) : ""
             };
 
             string dllPath = null;
@@ -297,11 +375,18 @@ namespace NinjaTrader.Custom.AddOns.StrategyAnalyzerExporter.Database
             {
                 if (string.IsNullOrWhiteSpace(dir)) continue;
                 var cand = Path.Combine(dir, "duckdb.dll");
-                if (File.Exists(cand)) { dllPath = cand; break; }
+                if (File.Exists(cand))
+                {
+                    dllPath = cand;
+                    break;
+                }
             }
 
             if (dllPath == null)
-                throw new FileNotFoundException("duckdb.dll not found. Searched:\n" + string.Join("\n", candidates));
+            {
+                var searchedPaths = string.Join("\n", candidates.Where(c => !string.IsNullOrWhiteSpace(c)));
+                throw new FileNotFoundException($"duckdb.dll not found. Searched:\n{searchedPaths}");
+            }
 
             var nativeDir = Path.GetDirectoryName(dllPath) ?? "";
             SetDllDirectory(nativeDir);
