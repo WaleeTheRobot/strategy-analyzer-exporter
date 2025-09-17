@@ -2,6 +2,8 @@
 
 A NinjaTrader strategy that exports multi-timeframe market data with calculated features to DuckDB database for machine learning and backtesting analysis.
 
+The current version is now using DuckDB. You can still use the older version with SQLite at the following link: https://github.com/WaleeTheRobot/strategy-analyzer-exporter/tree/v1.1.0
+
 ## Overview
 
 This strategy captures and processes market data across multiple timeframes (Primary, Secondary, Tertiary) and exports enriched data with technical features to a DuckDB database. It's designed for use with NinjaTrader's Strategy Analyzer to build comprehensive datasets that can be extracted for quantitative analysis.
