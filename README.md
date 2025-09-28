@@ -1,10 +1,12 @@
 # Strategy Analyzer Exporter
 
-A NinjaTrader strategy that exports multi-timeframe market data with calculated features to DuckDB database for machine learning and backtesting analysis.
+A NinjaTrader strategy that exports market data with calculated features to DuckDB database for machine learning and backtesting analysis.
+
+NinjaTrader Minimum Version `8.1.6.0`
 
 ## Overview
 
-This strategy captures and processes market data across multiple timeframes (Primary, Secondary, Tertiary) and exports enriched data with technical features to a DuckDB database. It's designed for use with NinjaTrader's Strategy Analyzer to build comprehensive datasets that can be extracted for quantitative analysis.
+This strategy captures and processes market data and exports enriched data with technical features to a DuckDB database. It's designed for use with NinjaTrader's Strategy Analyzer to build comprehensive datasets that can be extracted for quantitative analysis.
 
 ## Features
 
