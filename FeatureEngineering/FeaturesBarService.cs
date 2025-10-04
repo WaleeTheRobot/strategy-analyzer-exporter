@@ -13,7 +13,9 @@ public sealed class FeaturesBarService
     private readonly CircularBuffer<double> _maFastBuf;
     private readonly CircularBuffer<double> _maSlowBuf;
 
-    public FeaturesBarService(FeaturesBarConfig config, int? expectedBars = null)
+    private int _lastDay = -1;
+
+    public FeaturesBarService(FeaturesBarConfig config)
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
 
@@ -26,6 +28,15 @@ public sealed class FeaturesBarService
 
     public FeaturesBar? GetFeaturesBar(BaseBar bar)
     {
+        // Detect day change and reset buffers
+        if (_lastDay != -1 && bar.Day != _lastDay)
+        {
+            _bars.Clear();
+            _maFastBuf.Clear();
+            _maSlowBuf.Clear();
+        }
+        _lastDay = bar.Day;
+
         _bars.Add(bar);
         _maFastBuf.Add(bar.MovingAverage);
         _maSlowBuf.Add(bar.SlowMovingAverage);
