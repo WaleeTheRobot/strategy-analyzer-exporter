@@ -4,6 +4,8 @@ A NinjaTrader strategy that exports market data with calculated features to Duck
 
 NinjaTrader Minimum Version `8.1.6.0`
 
+Make sure you are considering the bars required to trade in your start time. For example, if you want to start adding to the database on a one minute chart at 0900, then you should set the start time to around 0830. This will start the calculations and populate the buffer before it actually writes to the database and prevent possible leakage between days.
+
 ## Overview
 
 This strategy captures and processes market data and exports enriched data with technical features to a DuckDB database. It's designed for use with NinjaTrader's Strategy Analyzer to build comprehensive datasets that can be extracted for quantitative analysis.
