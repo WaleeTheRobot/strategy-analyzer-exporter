@@ -140,7 +140,7 @@ public sealed class DatabaseWriter : IDisposable
     /// </summary>
     public void InsertBatch<T>(List<T> items)
     {
-        if (_disposed || items?.Count == 0) return;
+        if (_disposed || items == null || items.Count == 0) return;
 
         var metadata = GetOrCreateTypeMetadata(typeof(T));
         EnsureAppenderResolved();
@@ -149,20 +149,20 @@ public sealed class DatabaseWriter : IDisposable
         {
             var row = _miCreateRow.Invoke(_appender, null);
 
-            // Ultra-fast property access using pre-compiled getters
+            if (_rowType == null)
+            {
+                _rowType = row.GetType();
+                _miAppendNull = _rowType.GetMethod("AppendNull", BindingFlags.Public | BindingFlags.Instance);
+                _miEndRow = _rowType.GetMethod("EndRow", BindingFlags.Public | BindingFlags.Instance);
+            }
+
             for (int i = 0; i < metadata.Properties.Length; i++)
             {
                 var prop = metadata.Properties[i];
-                var rawValue = prop.Getter(item);
+                var raw = prop.Getter(item);
 
-                if (rawValue == null)
-                {
-                    _miAppendNull.Invoke(row, null);
-                    continue;
-                }
-
-                // Handle type conversions and call appropriate AppendValue
-                AppendOptimizedValue(row, prop, rawValue);
+                if (raw == null) { _miAppendNull.Invoke(row, null); continue; }
+                AppendOptimizedValue(row, prop, raw);
             }
 
             _miEndRow.Invoke(row, null);
@@ -170,16 +170,16 @@ public sealed class DatabaseWriter : IDisposable
             _rowsSinceCommit++;
             _lastAppendUtc = DateTime.UtcNow;
 
-            // Commit logic
             if (_config.CommitEveryRows > 0 && _rowsSinceCommit >= _config.CommitEveryRows)
             {
-                CommitAndMaybeCheckpoint();
+                CommitAndMaybeCheckpoint(reopenAppender: true);
                 continue;
             }
 
             MaybeCommitByTime();
         }
     }
+
 
     /// <summary>
     /// Optimized value appending with cached method resolution
@@ -334,19 +334,21 @@ public sealed class DatabaseWriter : IDisposable
 
     private void EnsureAppenderResolved()
     {
-        if (_appender != null && _miCreateRow != null) return;
+        if (_appender != null && _miCreateRow != null && _miCloseAppender != null)
+            return;
 
         _tx = _connection.BeginTransaction();
         _appender = _connection.CreateAppender("main", _tableName);
 
-        var t = _appender.GetType();
-        _miCreateRow = t.GetMethod("CreateRow", BindingFlags.Public | BindingFlags.Instance);
-        _miCloseAppender = t.GetMethod("Close", BindingFlags.Public | BindingFlags.Instance);
+        // Resolve methods directly from the appender type
+        var appType = _appender.GetType();
+        _miCreateRow = appType.GetMethod("CreateRow", BindingFlags.Public | BindingFlags.Instance);
+        _miCloseAppender = appType.GetMethod("Close", BindingFlags.Public | BindingFlags.Instance);
 
-        var row = _miCreateRow.Invoke(_appender, null);
-        _rowType = row.GetType();
-        _miAppendNull = _rowType.GetMethod("AppendNull", BindingFlags.Public | BindingFlags.Instance);
-        _miEndRow = _rowType.GetMethod("EndRow", BindingFlags.Public | BindingFlags.Instance);
+        // Defer row-type methods until first real row
+        _rowType = null;
+        _miAppendNull = null;
+        _miEndRow = null;
 
         _rowsSinceCommit = 0;
         _lastCommitUtc = DateTime.UtcNow;
@@ -411,15 +413,16 @@ public sealed class DatabaseWriter : IDisposable
         }
     }
 
-    private void CommitAndMaybeCheckpoint()
+    private void CommitAndMaybeCheckpoint(bool reopenAppender = true)
     {
         long committedRows = 0;
 
         try
         {
+            // Always close the appender before committing the tx
             if (_appender != null && _miCloseAppender != null)
             {
-                try { _miCloseAppender.Invoke(_appender, null); } catch { }
+                try { _miCloseAppender.Invoke(_appender, null); } catch { /* swallow */ }
             }
 
             if (_tx != null)
@@ -431,6 +434,7 @@ public sealed class DatabaseWriter : IDisposable
         }
         finally
         {
+            // Clear appender/tx state
             _appender = null;
             _tx = null;
             _rowType = null;
@@ -453,10 +457,12 @@ public sealed class DatabaseWriter : IDisposable
                 }
             }
 
-            // Re-open immediately for continued ingest
-            EnsureAppenderResolved();
+            // Only reopen if we know more rows are coming
+            if (reopenAppender)
+                EnsureAppenderResolved();
         }
     }
+
 
     private static string Quote(string id) => string.IsNullOrEmpty(id) ? id : "\"" + id.Replace("\"", "\"\"") + "\"";
 
@@ -486,10 +492,27 @@ public sealed class DatabaseWriter : IDisposable
     public void CloseImmediately()
     {
         if (_connection == null) return;
+
+        // Make sure appender is closed to release file handles
+        try
+        {
+            if (_appender != null && _miCloseAppender != null)
+            {
+                try { _miCloseAppender.Invoke(_appender, null); } catch { }
+            }
+        }
+        catch { /* ignore */ }
+
         try { _connection.Close(); } catch { }
         try { if (_connection is IDisposable d) d.Dispose(); } catch { }
         _connection = null;
+
+        _appender = null;
+        _tx = null;
+        _rowType = null;
+        _miCreateRow = _miAppendNull = _miEndRow = _miCloseAppender = null;
     }
+
 }
 
 /// <summary>

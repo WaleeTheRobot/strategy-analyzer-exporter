@@ -10,44 +10,20 @@ public static class Common
         return Math.Max(min, Math.Min(max, value));
     }
 
-    // Calculates the slope normalized by the recent range of the series
+    // Calculates the percentage change from start to end of the series window
     public static double CalculateSlope(IReadOnlyList<double> series, double tolerance = 1e-6)
     {
         if (series == null || series.Count < 2)
             return 0.0;
 
-        int n = series.Count;
+        double seriesStart = series[0];
+        double seriesEnd = series[series.Count - 1];
 
-        double sumX = 0.0, sumY = 0.0, sumXY = 0.0, sumXX = 0.0;
-        double minValue = series[0];
-        double maxValue = series[0];
-
-        for (int i = 0; i < n; i++)
-        {
-            double y = series[i];
-
-            // Linear regression calculations
-            sumX += i;
-            sumY += y;
-            sumXY += i * y;
-            sumXX += i * i;
-
-            // Min/max tracking
-            if (y < minValue) minValue = y;
-            if (y > maxValue) maxValue = y;
-        }
-
-        double denom = n * sumXX - sumX * sumX;
-        if (Math.Abs(denom) < tolerance)
+        // Check for invalid values
+        if (Math.Abs(seriesStart) < tolerance)
             return 0.0;
 
-        double slope = (n * sumXY - sumX * sumY) / denom;
-        double range = maxValue - minValue;
-
-        if (range < tolerance)
-            return 0.0;
-
-        return slope / range;
+        return ((seriesEnd - seriesStart) / seriesStart) * 100.0;
     }
 
     public static double CalculateAutocorrelation(

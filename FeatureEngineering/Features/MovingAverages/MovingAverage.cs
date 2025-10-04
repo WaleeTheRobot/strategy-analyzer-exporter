@@ -44,7 +44,7 @@ public static partial class MovingAverages
         if (Math.Abs(movingAverage) < tolerance)
             return 0.0;
 
-        return (close - movingAverage) / movingAverage;
+        return ((close - movingAverage) / movingAverage) * 100.0;
     }
 
     public static double GetMovingAverageAutocorrelation(
